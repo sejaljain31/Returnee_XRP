@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ReturnStatus {
+  CREATED
+  ESCROW_LOCKED
+  IN_BIN
+  PICKED_UP
+  REFUND_RELEASED
+}
+
+model ReturneeReturn {
+  id                      String       @id
+  ownerEmail              String       @map("owner_email")
+  residentName            String       @map("resident_name")
+  apartmentAddress        String       @map("apartment_address")
+  merchant                String
+  returnQrCode            String       @map("return_qr_code")
+  amountXrp               Float        @map("amount_xrp")
+  destinationTag          Int          @unique @map("destination_tag")
+  status                  ReturnStatus
+  createdAt               DateTime     @map("created_at")
+  updatedAt               DateTime     @map("updated_at")
+  escrowCondition         String       @map("escrow_condition")
+  escrowCreateTxHash      String       @map("escrow_create_tx_hash")
+  escrowFinishTxHash      String?      @map("escrow_finish_tx_hash")
+  escrowFulfillmentSecret String       @map("escrow_fulfillment_secret")
+  escrowOfferSequence     Int          @map("escrow_offer_sequence")
+  escrowIsReleased        Boolean      @map("escrow_is_released")
+
+  @@index([ownerEmail])
+  @@index([returnQrCode])
+  @@map("returns")
+}
