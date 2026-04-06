@@ -1,73 +1,60 @@
 # Returnee One-App MVP
 
-Single-folder Next.js app for the Returnee MVP.  
-Frontend UI and backend API routes run in the same project with one command.
+Returnee is a return-and-refund workflow for apartment buildings. A resident creates a return, drops the package into a building collection bin, a courier picks it up, and the refund is released only after the merchant verifies the handoff. The application is built as a single Next.js app with server-rendered pages, API routes, Google OAuth, PostgreSQL persistence via Prisma, and XRPL-backed escrow.
 
-## Prerequisites
+## Why XRPL Is Core To This Project
+
+XRPL is not an add-on in this app. It is the core trust and payout mechanism for the return flow.
+
+- When a resident creates a return, the app creates an **XRPL EscrowCreate** transaction.
+- Each return is assigned a **destination tag**, allowing a single Returnee XRPL account to track many users and returns safely.
+- The escrow is locked against a generated fulfillment condition.
+- After the package is picked up and the merchant verifies the QR code, the app submits **XRPL EscrowFinish** to release the refund.
+- Transaction hashes are stored with the return record so the app can show an auditable on-chain trail.
+
+In short: the refund state machine in the product is enforced by XRPL escrow rather than only by an internal database flag.
+
+## Demo Flow
+
+1. A resident signs in with Google.
+2. The resident creates a return from `/dashboard`.
+3. The app assigns a destination tag and locks the refund through XRPL escrow.
+4. The resident marks the package as dropped into the bin.
+5. A courier picks up the package from `/courier`.
+6. A merchant scans the return QR code from `/merchant`.
+7. The app finishes the XRPL escrow and marks the return as `REFUND_RELEASED`.
+
+## Architecture
+
+The project is intentionally built as one app so the product flow is easy to review and demo.
+
+- **Frontend:** Next.js App Router pages for resident, courier, merchant, login, and admin views.
+- **Backend:** Next.js route handlers under `app/api` for creating returns, marking bin drop-off, courier pickup, and merchant verification.
+- **Auth:** Google OAuth through NextAuth with role assignment derived from configured email lists.
+- **Database:** PostgreSQL with Prisma for return records, escrow metadata, owner data, timestamps, and destination-tag sequencing.
+- **XRPL integration:** Shared server-side helpers create escrow conditions, submit XRPL transactions, and persist transaction hashes.
+
+## Codebase Guide
+
+- [`app/`](/Users/sejaljain/Documents/XRPLSBR/Returnee_XRP/returnee-main/app) contains pages, layouts, styling, and API routes.
+- [`lib/returns-service.ts`](/Users/sejaljain/Documents/XRPLSBR/Returnee_XRP/returnee-main/lib/returns-service.ts) contains the main business workflow for return creation, pickup, verification, and refund release.
+- [`lib/xrpl.ts`](/Users/sejaljain/Documents/XRPLSBR/Returnee_XRP/returnee-main/lib/xrpl.ts) creates and finishes XRPL escrows.
+- [`lib/auth-options.ts`](/Users/sejaljain/Documents/XRPLSBR/Returnee_XRP/returnee-main/lib/auth-options.ts) configures Google sign-in and role-aware sessions.
+- [`prisma/schema.prisma`](/Users/sejaljain/Documents/XRPLSBR/Returnee_XRP/returnee-main/prisma/schema.prisma) defines the database schema.
+- [`prisma/migrations/`](/Users/sejaljain/Documents/XRPLSBR/Returnee_XRP/returnee-main/prisma/migrations) contains the SQL migrations for the MVP data model.
+
+## Local Setup
+
+### Prerequisites
 
 - Node.js 18+
 - npm
-- **PostgreSQL** database and `DATABASE_URL` (see below)
+- PostgreSQL database
+- Google OAuth client
 
-## Run Locally
+### Environment Variables
 
-```bash
-cp .env.example .env
-# Set DATABASE_URL to a Postgres connection string, then:
-npm install
-npx prisma migrate deploy   # or: npm run db:migrate (creates DB schema + destination tag sequence)
-npm run dev
-```
-
-### Database
-
-Returns, escrow fields, and destination tags are stored in Postgres via **Prisma**.
-
-1. Create a database (e.g. [Neon](https://neon.tech), Supabase, Railway, or local Docker).
-2. Set `DATABASE_URL` in `.env` (see `.env.example`).
-3. Apply migrations: `npx prisma migrate deploy` (production/CI) or `npm run db:migrate` (development; will prompt for migration name if you add new ones).
-
-The first migration creates the `returns` table and a `destination_tag_seq` sequence starting at **10001** (same behavior as the old in-memory counter).
-
-Without a valid `DATABASE_URL`, API routes that touch returns will fail at runtime.
-
-App runs at `http://localhost:3000`.
-
-## Login
-
-- Authentication uses **Google OAuth** via "Continue with Google".
-- Roles are assigned by email list:
-  - `ADMIN_EMAILS` -> admin
-  - `COURIER_EMAILS` -> courier
-  - any other signed-in email -> resident
-
-## MVP Flow Implemented
-
-1. Resident creates a return in `/dashboard`.
-2. App assigns a destination tag and creates a conditional escrow.
-3. Resident marks package as dropped into the bin from return details page.
-4. Courier confirms pickup in `/courier`.
-5. Escrow is finished and return status becomes `REFUND_RELEASED`.
-
-## Scope Lock
-
-- Single central Returnee XRPL account.
-- Destination-tagged users under that account.
-- One escrowed return flow only.
-- One simulated courier pickup flow.
-- Clean resident UI that explains benefits without requiring crypto knowledge.
-
-## Deferred Features
-
-- Hooks automation
-- MPT/NFT package passporting
-- Multisig hardening
-- Fee-split automation
-- Full production auth/compliance stack
-
-## Environment
-
-`.env`:
+Copy [`.env.example`](/Users/sejaljain/Documents/XRPLSBR/Returnee_XRP/returnee-main/.env.example) to `.env` and fill in the values:
 
 ```bash
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/returnee
@@ -83,21 +70,51 @@ ADMIN_EMAILS=admin@yourdomain.com
 COURIER_EMAILS=courier1@yourdomain.com,courier2@yourdomain.com
 ```
 
-`AUTH_SECRET` and `NEXTAUTH_SECRET` must be the same value (middleware reads the JWT with `AUTH_SECRET`; NextAuth signs it with `NEXTAUTH_SECRET`).
+Notes:
 
-If XRPL values are omitted, the app uses deterministic simulated transaction hashes for demo mode.
-If `XRPL_WALLET_SEED` and `XRPL_DESTINATION_ADDRESS` are set, escrow calls are submitted to XRPL (testnet URL by default in `.env.example`).
+- `AUTH_SECRET` and `NEXTAUTH_SECRET` must match.
+- `NEXTAUTH_URL` should be `http://localhost:3000` for local demoing.
+- If XRPL credentials are omitted, the app falls back to deterministic simulated hashes for a non-chain demo path.
+- If XRPL credentials are present, the app submits escrow transactions to XRPL Testnet.
 
-## Deploying to Vercel
+### Run Locally
 
-1. **Import the Git repo** and set **Root Directory** to `returnee-main` (this folder), not the monorepo root.
-2. **Environment variables:** Add every key from [`.env.example`](.env.example) under Vercel → Project → Settings → Environment Variables (at least **Production**; add **Preview** if you want preview deployments to hit a DB).
-   - **`NEXTAUTH_URL`:** your production URL, e.g. `https://your-project.vercel.app`.
-   - **`DATABASE_URL`:** prefer your host’s **pooled** / serverless connection string for serverless functions (Neon pooler, Supabase pooler, etc.).
-3. **Build:** This repo includes [`vercel.json`](vercel.json), which runs **`npm run build:vercel`** — that runs **`prisma migrate deploy`** then **`prisma generate`** then **`next build`**. Ensure **`DATABASE_URL`** is set for the build so migrations can connect.
-4. **Google OAuth:** In Google Cloud Console, under the OAuth client’s **Authorized redirect URIs**, add:
-   - `http://localhost:3000/api/auth/callback/google` (local)
-   - `https://<your-vercel-domain>/api/auth/callback/google` (production)
-5. **Monorepo:** [`next.config.mjs`](next.config.mjs) sets **`outputFileTracingRoot`** to the parent directory so Next.js file tracing behaves when another `package-lock.json` exists at the repo root.
+```bash
+cp .env.example .env
+npm install
+npx prisma migrate deploy
+npm run dev
+```
 
-After the first successful deploy, open the production URL and sign in with Google to verify auth and DB-backed returns.
+The app runs at `http://localhost:3000`.
+
+## Data Model
+
+Each return stores:
+
+- resident and address metadata
+- merchant name
+- QR code reference
+- refund amount
+- destination tag
+- XRPL escrow condition
+- escrow create and finish transaction hashes
+- fulfillment secret
+- release status
+
+The database also maintains a destination-tag sequence so each return can be tracked uniquely under one XRPL account.
+
+## Submission Notes
+
+- This repository contains the complete project code for the MVP.
+- The recommended demo path is a localhost recording.
+- The project’s XRPL usage centers on escrow-based refund release and destination-tagged return tracking.
+
+## Future Work
+
+- stronger production deployment and secret management
+- hooks-based automation
+- MPT or NFT-based package passporting
+- multisig hardening
+- fee-splitting automation
+- broader merchant and building operations support
